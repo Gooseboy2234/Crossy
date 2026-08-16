@@ -1,0 +1,45 @@
+# Screen <-> world calibration.
+#
+# EVERY VALUE IN THIS FILE IS A PLACEHOLDER. Measure them in Phase 3 before
+# trusting anything downstream. `python check_calib.py` refuses to pass while
+# `measured: false`.
+#
+# Sanity check after measuring: hop forward once and confirm the visual field
+# shifts by exactly px_per_row. If it doesn't, capture is being scaled
+# somewhere — fix that before continuing.
+
+measured: false            # flip to true only after Phase 3, by hand
+
+capture:
+  device_index: null       # ffmpeg -f avfoundation -list_devices true -i ""
+  native_w: null
+  native_h: null
+  scale_w: 886             # downscale at the ffmpeg stage; half res is plenty
+  scale_h: 1920
+  fps: 60                  # MEASURE it. Do not assume 120. See runbook A.9.
+
+geometry:
+  px_per_row: 78.0         # vertical pixels between lane centres
+  px_per_col: 78.0         # horizontal pixels between column centres
+  chicken_screen_xy: [443, 1180]
+  row0_screen_y: 1180
+  playfield_top_y: 300     # must sit BELOW the Dynamic Island
+  score_roi: [40, 90, 260, 170]   # x1,y1,x2,y2 — verify clear of the island
+  col_min: -5              # playable world columns, inclusive
+  col_max: 5
+
+# HSV ranges, OpenCV convention: H 0-179, S 0-255, V 0-255.
+# Sampled from a strip at each lane's screen-Y; modal hue decides the lane.
+lanes:
+  grass:  {h: [35, 85],  s: [80, 255], v: [60, 255]}
+  road:   {h: [0, 179],  s: [0, 60],   v: [30, 140]}
+  water:  {h: [95, 130], s: [90, 255], v: [70, 255]}
+  track:  {h: [5, 30],   s: [60, 200], v: [40, 200]}
+
+# Non-background blob extraction inside a lane strip.
+obstacles:
+  min_area_px: 400
+  max_area_px: 60000
+  strip_half_height_px: 30
+  gate_radius_px: 90       # nearest-neighbour match radius between frames
+  #                          too tight -> boxes flicker on the contact sheet
