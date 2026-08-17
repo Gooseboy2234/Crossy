@@ -15,10 +15,15 @@ cd "$(dirname "$0")"
 : "${UDID:?set UDID — find it with: idevice_id -l}"
 SCHEME="${SCHEME:-CrossyRunner}"
 
+# -allowProvisioningUpdates is not optional here. Automatic signing is disabled
+# by default for CLI builds, so without it xcodebuild refuses to mint the
+# profile and fails with "No profiles for 'com.ethan.crossyrunner' were found"
+# on a machine that has never built this scheme — i.e. always, the first time.
 xcodebuild build-for-testing \
   -scheme "$SCHEME" \
   -destination "platform=iOS,id=${UDID}" \
-  -derivedDataPath ./dd
+  -derivedDataPath ./dd \
+  -allowProvisioningUpdates
 
 date -u +%s > ../.last_sign
 echo "signed at $(date -u) — expires $(date -u -v+7d 2>/dev/null || date -u -d '+7 days')"

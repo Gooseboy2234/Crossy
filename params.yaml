@@ -3,13 +3,23 @@
 
 # --- Timing ---------------------------------------------------------------
 safety_margin_ms:        120     # collision window is [t_arr - m, t_arr + m]
-latency_offset_ms:       200     # capture -> CV -> socket -> movement, for a TAP.
-                                 # Seed from the Phase 0 slo-mo; taps.py then
-                                 # measures it continuously from ack RTTs.
-swipe_extra_latency_ms:  60      # extra cost of a lateral move. Lateral moves are
-                                 # swipes, and press(forDuration:thenDragTo:) is
-                                 # slower than tap(). MEASURE both separately —
-                                 # see docs/2026-reality-check.md §1.
+latency_offset_ms:       370     # capture -> CV -> socket -> movement, for a TAP.
+                                 # MEASURED 2026-08-16, not seeded from a guess:
+                                 #   socket RTT (host->iproxy->USB->runner->ack) 2ms
+                                 #   XCUITest .tap() blocks on-device            505ms
+                                 #   gesture sent -> pixels moved, end to end    370ms
+                                 # The 370 is a SINGLE sample over AirPlay and needs
+                                 # more; treat it as provisional. Note it is BELOW
+                                 # the 505ms block, which confirms .tap() returns
+                                 # long after the touch has actually landed —
+                                 # ios/README.md:70 calls synthesis time "the floor
+                                 # on latency" and that is wrong.
+swipe_extra_latency_ms:  213     # extra cost of a lateral move. MEASURED as the
+                                 # difference of on-device block times through the
+                                 # socket: swipe 718ms - tap 505ms = 213ms.
+                                 # (Comparing raw XCUITest synthesis medians gives
+                                 # ~360ms, but those come from a different code path
+                                 # with fewer samples — prefer the socket numbers.)
 
 # --- Water ----------------------------------------------------------------
 log_entry_min_overlap:   0.55    # min footprint fraction on the log, over the
@@ -47,8 +57,14 @@ fixed:
 
 search_space:
   safety_margin_ms:      [40, 400]
-  latency_offset_ms:     [80, 320]
-  swipe_extra_latency_ms: [0, 250]
+  # WIDENED 2026-08-16 after measurement. The old bounds were [80, 320] and
+  # [0, 250], and every number measured on real hardware fell OUTSIDE them:
+  # tap latency 370-505ms, swipe extra 213-360ms. A search space that excludes
+  # the true value does not merely converge slowly — it converges confidently to
+  # the edge of the box and reports a tidy p̂ for a parameter set that cannot be
+  # correct. Bounds must contain reality before any tuning result means anything.
+  latency_offset_ms:     [80, 700]
+  swipe_extra_latency_ms: [0, 450]
   log_entry_min_overlap: [0.35, 0.85]
   log_exit_lead_ms:      [150, 900]
   water_max_consecutive: [2, 8]
