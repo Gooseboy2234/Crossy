@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "case \"$CLAUDE_FILE_PATHS\" in *perceive.py*|*calib.yaml*) python3 check_calib.py || true;; esac"
+          }
+        ]
+      }
+    ]
+  }
+}
