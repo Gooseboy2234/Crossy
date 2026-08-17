@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.venv/
+dd/
+.last_sign
+run/heartbeat
+debug/**
+!debug/.gitkeep
+logs/*.csv
+*.mov
+*.mp4
+.DS_Store

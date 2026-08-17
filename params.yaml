@@ -1,0 +1,67 @@
+# Planner parameters — this is the CEM / successive-halving search space.
+# Bounds are in `search_space` below and are enforced on load.
+
+# --- Timing ---------------------------------------------------------------
+safety_margin_ms:        120     # collision window is [t_arr - m, t_arr + m]
+latency_offset_ms:       200     # capture -> CV -> socket -> movement, for a TAP.
+                                 # Seed from the Phase 0 slo-mo; taps.py then
+                                 # measures it continuously from ack RTTs.
+swipe_extra_latency_ms:  60      # extra cost of a lateral move. Lateral moves are
+                                 # swipes, and press(forDuration:thenDragTo:) is
+                                 # slower than tap(). MEASURE both separately —
+                                 # see docs/2026-reality-check.md §1.
+
+# --- Water ----------------------------------------------------------------
+log_entry_min_overlap:   0.55    # min footprint fraction on the log, over the
+                                 # whole safety window, at predicted landing
+log_exit_lead_ms:        400     # a reachable exit must exist within this
+water_max_consecutive:   4
+
+# --- Eagle ----------------------------------------------------------------
+eagle_timeout_ms:        2200    # no forward progress for this long -> panic
+eagle_panic_margin_ms:   60      # safety margin used while panicking
+
+# --- Search ---------------------------------------------------------------
+bfs_depth:               3       # rows of lookahead
+replan_interval_frames:  2
+column_center_bias:      0.3
+lateral_move_cost:       1.2
+dwell_cost:              2.0     # cost of landing on road/track with < 2 hops of
+                                 # clearance. Freezing is the worst thing this
+                                 # agent can do; this is what stops it walking
+                                 # into positions where freezing is all that's left.
+
+# --- Not searched: measured or structural --------------------------------
+# These are properties of the game or the harness, not knobs. Measure, don't tune.
+fixed:
+  hop_duration_ms:       130     # measure from the Phase 0 slo-mo footage
+  wait_quantum_ms:       60
+  chicken_width:         0.80    # footprint, world columns
+  max_nodes:             1500    # planner node cap; falls back to best partial
+  plan_horizon_ms:       1500    # hard cap on how far ahead a plan may reach.
+                                 # Without it Dijkstra explores unbounded waiting
+                                 # along the time axis and pins the node cap on
+                                 # every single tick.
+  eagle_death_ms:        3600    # sim ground truth only
+  panic_forward_bonus:   4.0     # cost discount on forward moves while panicking
+
+search_space:
+  safety_margin_ms:      [40, 400]
+  latency_offset_ms:     [80, 320]
+  swipe_extra_latency_ms: [0, 250]
+  log_entry_min_overlap: [0.35, 0.85]
+  log_exit_lead_ms:      [150, 900]
+  water_max_consecutive: [2, 8]
+  eagle_timeout_ms:      [1200, 3200]
+  eagle_panic_margin_ms: [10, 150]
+  bfs_depth:             [2, 5]
+  replan_interval_frames: [1, 6]
+  column_center_bias:    [0.0, 1.5]
+  lateral_move_cost:     [0.5, 3.0]
+  dwell_cost:            [0.0, 8.0]
+
+# Integer-valued members of the search space (CEM samples continuous, then rounds).
+integer_params:
+  - water_max_consecutive
+  - bfs_depth
+  - replan_interval_frames
