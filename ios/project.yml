@@ -1,0 +1,70 @@
+# XcodeGen spec for the Phase 0 / runner project.
+#
+# ios/README.md says a committed .xcodeproj would always be wrong because free
+# provisioning binds it to a team ID and UDID. That is true of a .xcodeproj; it
+# is not true of a spec. This file regenerates one on demand — change
+# DEVELOPMENT_TEAM and it is correct on a different machine.
+#
+#   xcodegen generate --spec ios/project.yml
+#
+# Produces ios/CrossyRunner.xcodeproj, which is where resign.sh expects it
+# (it cds to ios/ and calls xcodebuild -scheme CrossyRunner with no -project).
+
+name: CrossyRunner
+
+options:
+  bundleIdPrefix: com.ethan
+  deploymentTarget:
+    iOS: "18.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    DEVELOPMENT_TEAM: W2487L856D
+    CODE_SIGN_STYLE: Automatic
+    SWIFT_VERSION: "5.0"
+
+targets:
+  # Throwaway host app. Exists only so the UI test bundle has something to
+  # attach to; it is never the thing under test.
+  CrossyRunner:
+    type: application
+    platform: iOS
+    sources:
+      - path: CrossyRunnerApp
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.ethan.crossyrunner
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+
+  # The real payload: SmokeTest.swift + GestureRunner.swift.
+  # These must live HERE and not in the app target — XCTest does not link
+  # into a plain application, which is what "Unable to resolve module
+  # dependency: 'XCTest'" means.
+  # Deliberately NO target application and NO dependency on CrossyRunner.
+  #
+  # Setting TEST_TARGET_NAME makes xcodebuild install the host app alongside the
+  # runner, which costs a second slot against the free-provisioning cap of 3
+  # sideloaded apps per device. Nothing here needs it: the tests reach Crossy
+  # Road through XCUIApplication(bundleIdentifier:), never through a host.
+  # This is the same shape WebDriverAgent uses.
+  CrossyRunnerUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: CrossyRunner
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.ethan.crossyrunner.uitests
+        GENERATE_INFOPLIST_FILE: YES
+
+schemes:
+  CrossyRunner:
+    build:
+      targets:
+        CrossyRunnerUITests: [test]
+    test:
+      targets:
+        - CrossyRunnerUITests
