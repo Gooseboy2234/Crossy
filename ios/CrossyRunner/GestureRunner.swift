@@ -27,6 +27,7 @@ private enum Op: UInt8 {
     case ping         = 0x10
     case activate     = 0x11
     case setDefaults  = 0x12
+    case relaunch     = 0x13
 }
 
 private enum Status: UInt8 {
@@ -149,24 +150,51 @@ final class GestureRunner: XCTestCase {
         gestureQueue.async { [weak self] in
             guard let self else { return }
             let t0 = Date()
-            var status = Status.ok
 
-            switch op {
-            case .ping:
-                break
-            case .setDefaults:
-                if dist > 0 { self.swipeDist = dist }
-                if dur > 0 { self.swipeDurMs = dur }
-            case .activate:
-                self.app.activate()
-            case .tap:
-                if self.app.state != .runningForeground { status = .notForeground }
-                else { self.app.coordinate(withNormalizedOffset: CGVector(dx: x, dy: y)).tap() }
-            case .swipeLeft, .swipeRight, .swipeUp, .swipeDown:
-                if self.app.state != .runningForeground {
-                    status = .notForeground
-                } else {
+            // XCUIApplication is main-thread-only. activate() does not merely
+            // misbehave off-main, it throws NSInternalInconsistencyException and
+            // takes the whole runner down — and `activate` is what supervisor.py
+            // sends to recover from a stall, so the crash lands exactly when
+            // recovery is being attempted. `state` and gesture synthesis have the
+            // same affinity requirement; they just fail less loudly.
+            //
+            // gestureQueue still does the serialization it was added for. Hopping
+            // to main here supplies thread affinity on top of it. Both are needed:
+            // main alone would let the network queue enqueue overlapping gestures,
+            // gestureQueue alone crashes.
+            let status: Status = DispatchQueue.main.sync {
+                switch op {
+                case .ping:
+                    return .ok
+                case .setDefaults:
+                    if dist > 0 { self.swipeDist = dist }
+                    if dur > 0 { self.swipeDurMs = dur }
+                    return .ok
+                case .activate:
+                    self.app.activate()
+                    return .ok
+                case .relaunch:
+                    // The escape hatch CLAUDE.md:59 requires: a fullscreen
+                    // interstitial does not care that you activated the app,
+                    // because the app IS frontmost — the ad is inside it. Only a
+                    // terminate breaks out. activate() alone is why a stuck
+                    // 2am session stays stuck.
+                    //
+                    // NOT for use in the scoring path. Invariant 6 forbids
+                    // force-quitting a run in progress: the score only submits if
+                    // the run ends in-game. This is for ad/unknown-state recovery
+                    // only, where there is no run worth preserving.
+                    self.app.terminate()
+                    self.app.activate()
+                    return .ok
+                case .tap:
+                    guard self.app.state == .runningForeground else { return .notForeground }
+                    self.app.coordinate(withNormalizedOffset: CGVector(dx: x, dy: y)).tap()
+                    return .ok
+                case .swipeLeft, .swipeRight, .swipeUp, .swipeDown:
+                    guard self.app.state == .runningForeground else { return .notForeground }
                     self.swipe(op, x: x, y: y, dist: dist, durMs: dur)
+                    return .ok
                 }
             }
 

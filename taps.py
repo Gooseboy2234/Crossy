@@ -36,11 +36,18 @@ SWIPE_UP = 0x05
 PING = 0x10
 ACTIVATE = 0x11
 SET_DEFAULTS = 0x12
+#: terminate + relaunch. The only thing that escapes a fullscreen interstitial —
+#: ACTIVATE cannot, because the app is already frontmost and the ad lives inside
+#: it. Required by CLAUDE.md:59's 45s ad timeout and by supervisor.py's stall
+#: recovery. Never call it during a scoring run: invariant 6 requires the run to
+#: end in-game or the score never submits.
+RELAUNCH = 0x13
 
 OPCODE_NAME = {
     TAP: "tap", SWIPE_LEFT: "swipe_left", SWIPE_RIGHT: "swipe_right",
     SWIPE_DOWN: "swipe_down", SWIPE_UP: "swipe_up",
     PING: "ping", ACTIVATE: "activate", SET_DEFAULTS: "set_defaults",
+    RELAUNCH: "relaunch",
 }
 
 #: plan.py action -> opcode. `wait` deliberately has no entry: waiting is the
@@ -200,6 +207,17 @@ class TapClient:
 
     def activate(self) -> int:
         return self._send(ACTIVATE, 0, 0, 0, 0)
+
+    def relaunch(self) -> int:
+        """Terminate the app and bring it back — the ad/stall escape hatch.
+
+        Use this, not activate(), whenever the screen is unrecognised or stuck:
+        an interstitial runs INSIDE Crossy Road, so the app is already frontmost
+        and activate() is a no-op against it.
+
+        Must never fire during a scoring run (invariant 6).
+        """
+        return self._send(RELAUNCH, 0, 0, 0, 0)
 
     def set_defaults(self, dist: float, dur_ms: int) -> int:
         self.swipe_dist, self.swipe_dur_ms = dist, dur_ms
