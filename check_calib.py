@@ -74,8 +74,19 @@ def problems() -> List[str]:
             f"title and the AVFoundation path typically delivers 60 regardless of "
             f"panel refresh. Measure it (capture.py) and design to the measurement."
         )
-    if cap.get("device_index") is None:
-        out.append("capture.device_index unset (ffmpeg -f avfoundation -list_devices true -i \"\")")
+    # device_index is OPTIONAL and normally null. Apple removed the CoreMediaIO
+    # DAL plug-in, so a tethered iPhone no longer enumerates as an AVCaptureDevice
+    # and there is no index to set; capture.open_capture() falls back to the
+    # AirPlay mirror, which is located by aspect ratio at runtime rather than by
+    # a configured index. See docs/capture-paths.md.
+    #
+    # Demanding an index here used to make preflight fail permanently with advice
+    # ("run -list_devices") that cannot succeed. Worse, the only way to satisfy it
+    # was to fill in the index of some iPhone-named device — which on this Mac is
+    # the Continuity Desk View Camera, pointed at the desk.
+    idx = cap.get("device_index")
+    if idx is not None and not isinstance(idx, int):
+        out.append(f"capture.device_index={idx!r} — must be an int or null")
 
     return out
 
