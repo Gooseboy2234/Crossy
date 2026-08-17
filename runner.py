@@ -32,6 +32,7 @@ import numpy as np
 
 import analyze
 from analyze import DEATHS_CSV, DEATH_FIELDS, RUNS_CSV, RUN_FIELDS
+import capture as capture_mod
 from capture import AVFoundationCapture, FrameSource, find_iphone_index
 from config import (
     DEBUG_DIR,
@@ -50,12 +51,14 @@ from perceive import Perceiver
 from plan import Planner
 from states import (
     AD_TIMEOUT_S,
+    GAME_OVER_PLAY_XY,
     STATE_TIMEOUT_S,
     UNKNOWN_TIMEOUT_S,
     EventModeGuard,
     Screen,
     ScreenClassifier,
     find_close_buttons,
+    is_safe_game_over_tap,
 )
 from taps import TapClient
 from world import LaneType
@@ -202,7 +205,7 @@ class Runner:
             # MENU, GACHA, CRASHED and anything unlabelled: tap through and let
             # the budget above catch it if that does not work.
             if cls.screen is not Screen.UNKNOWN:
-                self._tap_centre()
+                self._tap_dismiss(cls.screen)
 
     # -- gameplay ----------------------------------------------------------
 
@@ -284,7 +287,7 @@ class Runner:
 
     def _on_death(self, img: np.ndarray) -> None:
         if self.stats is None:
-            self._tap_centre()
+            self._tap_dismiss(Screen.GAME_OVER)
             return
 
         score = self.perceiver.chicken_row
@@ -301,7 +304,7 @@ class Runner:
         if self.threshold_reached:
             raise KillSwitchTripped()
 
-        self._tap_centre()
+        self._tap_dismiss(Screen.GAME_OVER)
         self.perceiver.reset()
         self._new_run()
 
@@ -338,15 +341,54 @@ class Runner:
 
     # -- unknown / recovery ------------------------------------------------
 
+    #: terminate+activate measured at ~4.5s on device, then the Hipster Whale
+    #: splash plays. Perceiving during that window yields nothing but confuses the
+    #: state timer into thinking we are stuck again.
+    RELAUNCH_SETTLE_S = 7.0
+
     def _relaunch(self, why: str) -> None:
+        """Force-quit and reopen. The ONLY thing that escapes an interstitial.
+
+        This used to call taps.activate(), which cannot work: an ad runs inside
+        Crossy Road, so the app is already frontmost and activating it is a no-op.
+        The method was named _relaunch and invoked from the CLAUDE.md:59 ad timeout,
+        so the single mechanism meant to break a 2am stall silently did nothing —
+        confirmed on device, where an interstitial sat through repeated activates
+        and only terminate() cleared it.
+
+        Never reachable from the scoring path: invariant 6 requires a run to end
+        in-game or the score never submits. This fires only on AD/UNKNOWN timeout,
+        where there is no run worth preserving.
+        """
         log.warning("relaunching app: %s", why)
         if not self.dry_run and self.taps:
-            self.taps.activate()
+            self.taps.relaunch()
+            if self.RELAUNCH_SETTLE_S:
+                time.sleep(self.RELAUNCH_SETTLE_S)
         self._state_since = time.monotonic()
         self.perceiver.reset()
 
-    def _tap_centre(self) -> None:
-        if not self.dry_run and self.taps:
+    def _tap_dismiss(self, screen: Optional[Screen] = None) -> None:
+        """Tap to advance past a non-gameplay screen.
+
+        This used to tap the origin, (0.5, 0.62). On the real game-over card that
+        pixel is the roof of a background car — measured, not guessed. So every
+        death tapped a decoration for the full DEATH budget and then force-
+        relaunched, which at ~320 runs a night is the entire grind spent
+        restarting the app instead of playing.
+
+        On GAME_OVER the target is the play button, and it is checked against
+        is_safe_game_over_tap() because the two rewarded-video banners sit
+        directly above it — tapping one starts a paid ad, which happened on device
+        tonight. The assertion is cheap and the failure mode is expensive.
+        """
+        if self.dry_run or not self.taps:
+            return
+        if screen is Screen.GAME_OVER:
+            x, y = GAME_OVER_PLAY_XY
+            assert is_safe_game_over_tap(x, y), "play target drifted into a banner"
+            self.taps.tap(x, y)
+        else:
             self.taps.tap()
 
     # -- logging -----------------------------------------------------------
@@ -405,7 +447,10 @@ class Runner:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="Crossy Road autoplayer")
-    ap.add_argument("--device-index", type=int, default=None)
+    ap.add_argument("--device-index", type=int, default=None,
+                    help="force a specific avfoundation index, bypassing autodetect")
+    ap.add_argument("--mirror-wait", type=float, default=120.0,
+                    help="seconds to wait for an AirPlay mirror to appear")
     ap.add_argument("--max-runs", type=int, default=MAX_RUNS)
     ap.add_argument("--dry-run", action="store_true", help="perceive and plan, send no input")
     ap.add_argument("--no-preflight", action="store_true")
@@ -427,16 +472,28 @@ def main() -> int:
     calib = load_calib()
     params, _ = load_params()
 
-    idx = args.device_index if args.device_index is not None else find_iphone_index()
-    if idx is None:
-        print("No capture device found. `ffmpeg -f avfoundation -list_devices true -i \"\"`")
-        return 1
-
     cap = calib.capture
-    source = AVFoundationCapture(
-        idx, width=cap.get("scale_w", 886), height=cap.get("scale_h", 1920),
-        fps=cap.get("fps", 60),
-    ).start()
+    if args.device_index is not None:
+        source = AVFoundationCapture(
+            args.device_index,
+            width=cap.get("scale_w", 886), height=cap.get("scale_h", 1920),
+            fps=cap.get("fps", 60),
+        ).start()
+    else:
+        # open_capture() prefers a real AVCaptureDevice and falls back to the
+        # AirPlay mirror. The direct path cannot succeed on current macOS — Apple
+        # removed the CoreMediaIO DAL plug-in — so in practice this returns a
+        # MirrorCapture today and would return the direct device unchanged the day
+        # a UVC capture stick is plugged in. docs/capture-paths.md has the detail.
+        #
+        # Do NOT "fix" a None here by grabbing the first iPhone-named avfoundation
+        # device: on a Mac with Continuity Camera that is the Desk View Camera, a
+        # webcam aimed at the desk, and perception will happily classify furniture.
+        try:
+            source = capture_mod.open_capture(wait_s=args.mirror_wait).start()
+        except RuntimeError as e:
+            print(str(e))
+            return 1
 
     taps = None
     if not args.dry_run:

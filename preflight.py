@@ -99,6 +99,56 @@ def _device() -> Check:
         return Check("device attached", False, "idevice_id unavailable")
 
 
+def _frame_source() -> Check:
+    """A usable frame source EXISTS — the check that would have saved a night.
+
+    Every other preflight item can pass while the harness has nothing to look at.
+    The direct AVFoundation path is dead on current macOS (Apple removed the
+    CoreMediaIO DAL plug-in; see docs/capture-paths.md), so in practice this
+    verifies an AirPlay mirror is up before the operator goes to bed.
+
+    Deliberately does NOT accept "some iPhone-named device exists". On a Mac with
+    Continuity Camera that matches the Desk View Camera, and a night spent
+    classifying lanes in a webcam view of the desk looks exactly like a
+    catastrophic perception bug.
+    """
+    import capture as cap
+    idx = cap.find_iphone_index()
+    if idx is not None:
+        return Check("frame source", True, f"direct AVFoundation device {idx}")
+    crop = cap.find_mirrored_phone()
+    if crop is None:
+        return Check("frame source", False,
+                     "no direct device and no AirPlay mirror — start Screen "
+                     "Mirroring on the phone (see docs/capture-paths.md)")
+    return Check("frame source", True, f"AirPlay mirror {crop!r}")
+
+
+def _runner_socket() -> Check:
+    """The gesture runner is actually listening, not merely 'iproxy is running'.
+
+    iproxy accepts a TCP connection whether or not anything is listening on the
+    device side, so a port check alone is not evidence. A PING round-trips in
+    ~2ms when the runner is genuinely up.
+    """
+    import socket
+    import struct
+    try:
+        s = socket.create_connection(("127.0.0.1", 9100), timeout=3)
+    except OSError as e:
+        return Check("gesture runner", False, f"cannot connect to :9100 ({e})")
+    try:
+        s.settimeout(3)
+        s.sendall(struct.pack(">BBHHHH", 0x10, 0, 0, 0, 0, 0))   # PING
+        ack = s.recv(4)
+        return Check("gesture runner", len(ack) == 4,
+                     "ping acked" if len(ack) == 4 else "no ack — runner not serving")
+    except OSError as e:
+        return Check("gesture runner", False, f"ping failed ({e})")
+    finally:
+        s.close()
+
+
 def _p_hat() -> Check:
     """p̂ <= 1.5% measured ON DEVICE, not just in sim."""
     import analyze
@@ -127,6 +177,7 @@ MANUAL = [
 def run(quiet: bool = False) -> bool:
     checks: List[Check] = [
         _profile_age(), _lockfile(), _tooling(), _device(),
+        _frame_source(), _runner_socket(),
         _calib(), _disk(), _debug_retention(), _p_hat(),
     ]
     blocking_failures = [c for c in checks if not c.ok and c.blocking]

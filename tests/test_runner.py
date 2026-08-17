@@ -39,6 +39,7 @@ class FakeTaps:
         self.actions: list[str] = []
         self.taps: list[tuple] = []
         self.activations = 0
+        self.relaunches = 0
         self.closed = False
 
     def act(self, action):
@@ -51,6 +52,17 @@ class FakeTaps:
 
     def activate(self):
         self.activations += 1
+        return 1
+
+    def relaunch(self):
+        """Terminate + reopen.
+
+        Counted separately from activate() on purpose. Recovery from an ad
+        REQUIRES a terminate — the app is already frontmost, so activate() is a
+        no-op against an interstitial. Asserting on this counter rather than
+        activations is what stops that regression coming back.
+        """
+        self.relaunches += 1
         return 1
 
     def close(self):
@@ -88,7 +100,13 @@ def env(tmp_path, monkeypatch):
 def _runner(frames, taps=None, **kw):
     calib = load_calib()
     params, _ = load_params()
-    return Runner(ArraySource(frames), taps, calib, params, dry_run=taps is None, **kw)
+    r = Runner(ArraySource(frames), taps, calib, params, dry_run=taps is None, **kw)
+    # On device a relaunch takes ~4.5s to terminate+activate and then plays a
+    # splash, so the runner waits before trusting perception again. Sleeping that
+    # for real in tests costs ~7s per recovery and turned this file from 11s into
+    # 96s. The wait is device behaviour, not logic under test.
+    r.RELAUNCH_SETTLE_S = 0.0
+    return r
 
 
 # --------------------------------------------------------------------------
@@ -205,7 +223,12 @@ def test_unknown_screen_dumps_and_relaunches(env, monkeypatch, tmp_path):
 
     if r._last_screen is Screen.UNKNOWN:
         assert dumped, "unknown screen was not dumped for later triage"
-        assert taps.activations > 0, "did not relaunch out of the unknown state"
+        assert taps.relaunches > 0, (
+            "did not TERMINATE out of the unknown state. activate() is not enough: "
+            "an interstitial runs inside Crossy Road, so the app is already "
+            "frontmost and activating it changes nothing. This assertion used to "
+            "check activations and passed while the device stayed stuck."
+        )
 
 
 def _interstitial() -> np.ndarray:
@@ -244,7 +267,7 @@ def test_ad_state_has_a_hard_timeout(env, monkeypatch):
     r = _runner([_interstitial()] * 5, taps=taps)
     r.run()
     assert r._last_screen is not Screen.GAMEPLAY
-    assert taps.activations > 0, "full-screen ad never timed out into a relaunch"
+    assert taps.relaunches > 0, "full-screen ad never timed out into a terminate+relaunch"
 
 
 def test_an_unrecognised_ad_still_escapes_via_the_unknown_path(env, monkeypatch, tmp_path):
@@ -264,4 +287,4 @@ def test_an_unrecognised_ad_still_escapes_via_the_unknown_path(env, monkeypatch,
     r = _runner([weird] * 4, taps=taps)
     r.run()
     assert r._last_screen is not Screen.GAMEPLAY
-    assert taps.activations > 0, "never escaped an unlabelable full-screen state"
+    assert taps.relaunches > 0, "never escaped an unlabelable full-screen state"
