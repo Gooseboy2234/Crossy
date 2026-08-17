@@ -44,7 +44,8 @@ class Params:
     hop_duration_ms: float = 130.0
     wait_quantum_ms: float = 60.0
     chicken_width: float = 0.80
-    max_nodes: int = 6000
+    max_nodes: int = 1500
+    plan_horizon_ms: float = 1500.0
     eagle_death_ms: float = 3600.0
     panic_forward_bonus: float = 4.0
 

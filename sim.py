@@ -89,7 +89,7 @@ class PeriodicLane:
     phase: float = 0.0        # centre position of copy k=0 at t=0
     trees: Tuple[float, ...] = ()
 
-    def materialize(self, t_ms: float, col_min: float, col_max: float, pad: float = 26.0) -> List[Obstacle]:
+    def materialize(self, t_ms: float, col_min: float, col_max: float, pad: float = 12.0) -> List[Obstacle]:
         """Obstacle centres at absolute time `t_ms`, covering the playfield + pad."""
         if self.type is LaneType.GRASS:
             return [
@@ -253,6 +253,7 @@ class CrossySim:
         self.row = 0
         self.col = 0.0
         self.log_id = -1
+        self.obs_col = 0.0
         self.score = 0
         self.max_row = 0
         self.ms_since_forward = 0.0
@@ -274,9 +275,31 @@ class CrossySim:
     def observe(self) -> World:
         """A World as perception would report it: stale, jittered, occasionally wrong."""
         n = self.noise
-        t_obs = self.t
+        # The frame we are acting on is already `latency_offset_ms` old by the
+        # time the input lands. Modelling latency HERE — as staleness of the
+        # observation — rather than as an extra delay on every action is the
+        # faithful version: the capture→CV→socket pipeline runs concurrently
+        # with the chicken hopping, it does not serialize behind it.
+        #
+        # Charging it per action instead made every hop take 330ms rather than
+        # 130ms, which tripled road exposure and starved forward progress into
+        # eagle deaths. That was a bug in the environment, not in the planner.
+        t_obs = self.t - self.p.latency_offset_ms
         if n.stale_frame_prob and self.rng.random() < n.stale_frame_prob:
             t_obs -= n.stale_frame_age_ms
+
+        # The chicken's own column comes from the same stale frame as everything
+        # else. On land that is harmless — the column is on a grid and does not
+        # move. On a log it is the whole ballgame: the chicken drifts during the
+        # latency window too, and handing the planner a *fresh* column beside a
+        # *stale* world made it over-predict its own drift by latency × log speed
+        # (~0.46 columns, most of a chicken). That single inconsistency was
+        # ~75% of all water deaths.
+        self.obs_col = self.col
+        if self.log_id >= 0:
+            log = self._true_log(self.row, self.log_id, self.t)
+            if log is not None:
+                self.obs_col = self.col + log.vx * (t_obs - self.t) / 1000.0
 
         self._ensure(self.row + self.horizon)
         lanes: Dict[int, Lane] = {}
@@ -294,9 +317,15 @@ class CrossySim:
 
         return World(lanes=lanes, col_min=self.col_min, col_max=self.col_max, t_ref_ms=t_obs)
 
-    def effective_latency(self) -> float:
+    def latency_error(self) -> float:
+        """Only the *unpredicted* part of latency.
+
+        The nominal offset is already modelled as observation staleness, and the
+        planner compensates for it. What actually kills you is the jitter it
+        could not have known about.
+        """
         j = self.noise.latency_jitter_ms
-        return self.p.latency_offset_ms + (self.rng.uniform(-j, j) if j else 0.0)
+        return self.rng.uniform(-j, j) if j else 0.0
 
     # -- dynamics ----------------------------------------------------------
 
@@ -309,7 +338,7 @@ class CrossySim:
         # Charging the *jittered* latency here is what makes latency_offset_ms a
         # tunable rather than a declaration: the planner assumed the nominal
         # value, the sim delivers the real one, and the gap is what kills you.
-        dt = action_duration(p, action) + self.effective_latency()
+        dt = action_duration(p, action) + self.latency_error()
         t_arr = self.t + dt
 
         # drift while riding
@@ -402,7 +431,7 @@ class CrossySim:
         ticks = 0
         while self.dead is None and self.score < max_score and ticks < max_ticks:
             world = self.observe()
-            res = planner.plan(world, self.row, self.col, self.log_id, self.ms_since_forward)
+            res = planner.plan(world, self.row, self.obs_col, self.log_id, self.ms_since_forward)
             self.step(res.action)
             ticks += 1
         return EpisodeResult(

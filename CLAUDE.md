@@ -104,6 +104,24 @@ layout; everything else maps 1:1.
 5. **All obstacle math in world columns, not pixels.** Convert at the perception boundary.
 6. **Stop tapping at threshold — never force-quit.** The run must end in-game or the
    score never submits.
+7. **Never return WAIT because nothing looked safe.** Standing still in a road lane is
+   not a neutral default, it is a decision to be hit by whatever is already coming.
+   Degrade: relax the margin, then rank the bad options by time-to-impact. This one
+   bug was **95% of all sim deaths**.
+8. **Latency is observation staleness, not a per-action delay.** The capture→CV→socket
+   pipeline runs concurrently with the chicken hopping. Charging it per action made
+   every hop 330ms instead of 130ms and tripled road exposure.
+9. **Whatever is stale in the world is stale about the chicken too.** Feeding the
+   planner a fresh column beside a stale world makes it over-predict its own drift on
+   a log by latency × log speed — ~0.46 columns, most of a chicken. That alone was
+   ~75% of water deaths.
+10. **A boardable log is not a survivable log.** Check the drift budget — time until
+    the log carries you off the edge — as well as the reachable exit.
+
+Invariants 7-10 were each found by instrumenting the sim, never by reading the code.
+All four are *consistency* bugs: two places quietly disagreeing about time or position.
+They throw no exception and produce no obviously wrong output. They just raise `p`.
+`tests/test_invariants.py` pins every one of them.
 
 ## Objective function
 

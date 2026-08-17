@@ -184,9 +184,14 @@ class Planner:
                 continue
             nodes += 1
 
-            rank = (s.row, -cost, s)
-            if rank[:2] > best_partial[:2]:
-                best_partial = rank
+            # Only states we actually moved to are candidates. The root has cost
+            # 0 and so would always win this comparison, which made the planner
+            # report "boxed in" whenever the goal row was merely unreachable —
+            # e.g. any time a river sits inside the lookahead window.
+            if s.steps > 0:
+                rank = (s.row, -cost, s)
+                if rank[:2] > best_partial[:2]:
+                    best_partial = rank
 
             if s.row >= goal_row:
                 if best_terminal is None or cost < best_terminal[0]:
@@ -318,6 +323,11 @@ class Planner:
         else:
             target_row, target_col = s.row, col
 
+        if t_arr - world.t_ref_ms > p.plan_horizon_ms:
+            # Without this, WAIT can be chained indefinitely and Dijkstra fans out
+            # along the time axis: measured at ~13.7k expansions per tick, pinning
+            # the node cap every time and starving the search of actual depth.
+            return None
         if not world.in_bounds(target_col):
             return None
 
@@ -341,8 +351,15 @@ class Planner:
             water_run = s.water_run + 1 if target_row != s.row else s.water_run
             if water_run > p.water_max_consecutive:
                 return None
+            if self._drift_budget_ms(world, landing, carrier) < p.log_exit_lead_ms:
+                # INVARIANT 3, drift half. A log you can board is not a log you
+                # can survive: if it will carry you off the edge before an exit
+                # could open, boarding it is a delayed death. Every water death
+                # in the first sim run was this — ride a leftward log to the
+                # screen edge, then discover every action is illegal.
+                return None
             if not self._has_exit(world, target_row, landing, t_arr, carrier, margin):
-                return None          # INVARIANT 3
+                return None          # INVARIANT 3, reachability half
             return State(target_row, landing, t_arr, carrier.oid, water_run, s.steps + 1)
 
         # Solid ground. Snap off the log's fractional drift onto the grid.
@@ -352,6 +369,14 @@ class Planner:
         if blocking_obstacle(lane, landing, p.chicken_width, t0, t1, world.t_ref_ms):
             return None
         return State(target_row, float(landing), t_arr, -1, 0, s.steps + 1)
+
+    @staticmethod
+    def _drift_budget_ms(world: World, col: float, carrier: Obstacle) -> float:
+        """Milliseconds before this log carries a chicken at `col` off the edge."""
+        if abs(carrier.vx) < 1e-9:
+            return float("inf")
+        edge = world.col_max if carrier.vx > 0 else world.col_min
+        return max(0.0, (edge - col) / carrier.vx) * 1000.0
 
     def _dwell_risk(self, world: World, s: State) -> float:
         """How exposed is it to be standing where `s` puts us?

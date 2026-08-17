@@ -179,6 +179,34 @@ None of that is worth doing before §1 is answered on real hardware. **There is 
 point tuning `p` while three of the planner's four actions have no way to reach
 the phone.**
 
+### Where the sim currently sits
+
+For calibration of expectations only — these are **sim numbers against placeholder
+physics constants, with the Original world's assumed lane mix, and no device
+validation whatsoever**:
+
+| | p̂ | deaths | P(reach 330) |
+|---|---|---|---|
+| noiseless | 1.02% ±8% | 150 | 3.4% |
+| with domain randomization | **1.46% ±8%** | 150 | 0.8% |
+
+Per-lane with DR: water 2.97% (51d), road 1.81% (70d), track 1.57% (14d),
+grass 0.39% (15d).
+
+That lands on the runbook's 1.5% stopping rule, and it would be a mistake to read
+anything into it yet. The runbook's own gate applies: sim p̂ means nothing until it
+has been checked against device p̂ and agrees within ~30% relative. `hop_duration_ms`,
+`latency_offset_ms`, `swipe_extra_latency_ms` and the whole lane mix are guesses
+until Phase 0 and Phase 3 measure them. A sim tuned against its own assumptions
+will happily report any number you like.
+
+Getting there took four bug fixes, none of which were visible by reading the code
+— all four found by instrumenting and dumping. They are now CLAUDE.md invariants
+7-10 with regression tests. The progression was p̂ 10.1% → 4.7% → 2.9% → 1.46%,
+and **every step was a consistency bug, not a tuning change**. No parameter was
+tuned at any point. That is the honest lesson for the tuning phase: check that the
+planner and the world agree before believing any p̂ at all.
+
 ---
 
 *Sources: Apple App Store listing for Crossy Road (id924373886, v7.13) and

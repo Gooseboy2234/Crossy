@@ -37,7 +37,11 @@ fixed:
   hop_duration_ms:       130     # measure from the Phase 0 slo-mo footage
   wait_quantum_ms:       60
   chicken_width:         0.80    # footprint, world columns
-  max_nodes:             6000    # planner node cap; falls back to best partial
+  max_nodes:             1500    # planner node cap; falls back to best partial
+  plan_horizon_ms:       1500    # hard cap on how far ahead a plan may reach.
+                                 # Without it Dijkstra explores unbounded waiting
+                                 # along the time axis and pins the node cap on
+                                 # every single tick.
   eagle_death_ms:        3600    # sim ground truth only
   panic_forward_bonus:   4.0     # cost discount on forward moves while panicking
 

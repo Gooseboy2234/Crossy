@@ -81,7 +81,9 @@ class World:
     t_ref_ms: float = 0.0
 
     def lane(self, row: int) -> Lane:
-        return self.lanes.get(row, Lane(row=row, type=LaneType.UNKNOWN))
+        # Shared sentinel: this is the hottest call in the planner and building a
+        # throwaway Lane per miss showed up as 5% of total runtime.
+        return self.lanes.get(row) or _UNKNOWN_LANE
 
     def obstacle(self, oid: int) -> Optional[Obstacle]:
         for lane in self.lanes.values():
@@ -92,6 +94,10 @@ class World:
 
     def in_bounds(self, col: float) -> bool:
         return self.col_min - 1e-9 <= col <= self.col_max + 1e-9
+
+
+#: Returned for any row perception has not classified. Never mutated.
+_UNKNOWN_LANE = Lane(row=-10_000, type=LaneType.UNKNOWN)
 
 
 # --------------------------------------------------------------------------
